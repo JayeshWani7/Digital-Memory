@@ -1,0 +1,162 @@
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: digital-memory-postgres
+    environment:
+      POSTGRES_USER: memory_user
+      POSTGRES_PASSWORD: secure_password_change_me
+      POSTGRES_DB: digital_memory
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory_user -d digital_memory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - digital-memory-net
+    # Keep values in sync with .env file
+
+  # Redis for message queue
+  redis:
+    image: redis:7-alpine
+    container_name: digital-memory-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - digital-memory-net
+    command: redis-server --appendonly yes
+
+  # Ingestion Service (Go) - will build from source
+  ingestion-service:
+    build:
+      context: ./backend/ingestion-service
+      dockerfile: Dockerfile
+    container_name: digital-memory-ingestion
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: 8001
+      DATABASE_URL: postgres://memory_user:secure_password_change_me@postgres:5432/digital_memory?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: info
+      ENV: development
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - digital-memory-net
+    restart: unless-stopped
+    # Uncomment for local development:
+    # volumes:
+    #   - ./backend/ingestion-service:/app
+    # command: go run cmd/main.go
+
+  # AI Processing Service (Python) - will build from source
+  ai-service:
+    build:
+      context: ./backend/ai-service
+      dockerfile: Dockerfile
+    container_name: digital-memory-ai
+    ports:
+      - "8002:8002"
+    environment:
+      PORT: 8002
+      DATABASE_URL: postgres://memory_user:secure_password_change_me@postgres:5432/digital_memory?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: gpt-3.5-turbo
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      LOG_LEVEL: info
+      ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - digital-memory-net
+    restart: unless-stopped
+    # Uncomment for local development with hot reload:
+    # volumes:
+    #   - ./backend/ai-service:/app
+    # command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+
+  # API Service (Go) - will build from source
+  api-service:
+    build:
+      context: ./backend/api-service
+      dockerfile: Dockerfile
+    container_name: digital-memory-api
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+      DATABASE_URL: postgres://memory_user:secure_password_change_me@postgres:5432/digital_memory?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: info
+      ENV: development
+      JWT_SECRET: ${JWT_SECRET:-change_me_for_production}
+      API_KEY: ${API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - digital-memory-net
+    restart: unless-stopped
+    # Uncomment for local development:
+    # volumes:
+    #   - ./backend/api-service:/app
+    # command: go run cmd/main.go
+
+  # Optional: Adminer for database management
+  adminer:
+    image: adminer:latest
+    container_name: digital-memory-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - digital-memory-net
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+  # Optional: Redis Commander for queue inspection
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: digital-memory-redis-cli
+    ports:
+      - "8081:8081"
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - digital-memory-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  digital-memory-net:
+    driver: bridge
