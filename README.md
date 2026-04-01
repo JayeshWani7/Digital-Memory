@@ -1,4 +1,4 @@
-# Digital Memory Layer - Phase 1
+# Digital Memory
 
 A production-grade backend system that ingests data from Slack and GitHub, extracts structured knowledge using LLMs, stores embeddings in a vector database, and enables semantic querying.
 
