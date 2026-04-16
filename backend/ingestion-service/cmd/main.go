@@ -16,6 +16,7 @@ import (
 	"github.com/digital-memory/ingestion-service/internal/handlers"
 	"github.com/digital-memory/ingestion-service/internal/middleware"
 	"github.com/digital-memory/ingestion-service/internal/queue"
+        
 )
 
 func init() {
@@ -68,6 +69,7 @@ func main() {
 	router.Use(middleware.LoggingMiddleware(logger))
 	router.Use(middleware.ErrorHandlingMiddleware())
 	router.Use(middleware.RateLimitMiddleware())
+        router.Use(middleware.SlackLoggerMiddleware(logger))
 
 	// Initialize handler and register routes
 	handlerService := handlers.NewEventHandler(db, redisProducer, logger)
