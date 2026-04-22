@@ -44,9 +44,10 @@ func SlackLoggerMiddleware(logger *zap.Logger) gin.HandlerFunc {
 				zap.Duration("latency", time.Since(start)),
 			)
 		} else {
-			// Fallback: log raw body
+			// Fallback: avoid logging raw payload to prevent leaking sensitive data
 			logger.Info("Slack webhook received",
-				zap.String("raw_body", string(body)),
+				zap.Bool("payload_parse_failed", true),
+				zap.Int("payload_size_bytes", len(body)),
 				zap.Duration("latency", time.Since(start)),
 			)
 		}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -254,14 +255,32 @@ func (h *EventHandler) verifySlackSignature(c *gin.Context) bool {
 	timestamp := c.GetHeader("X-Slack-Request-Timestamp")
 	signature := c.GetHeader("X-Slack-Signature")
 	signingSecret := os.Getenv("SLACK_SIGNING_SECRET")
+	environment := os.Getenv("ENV")
 
 	if signingSecret == "" {
 		h.logger.Warn("SLACK_SIGNING_SECRET not configured")
-		return true // Allow for development
+		return environment == "development"
+	}
+
+	if timestamp == "" || signature == "" {
+		return false
+	}
+
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+
+	now := time.Now().Unix()
+	if ts < now-300 || ts > now+300 {
+		return false
 	}
 
 	// Read body (we'll need to re-read it)
-	body, _ := io.ReadAll(c.Request.Body)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return false
+	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
 	baseString := fmt.Sprintf("v0:%s:%s", timestamp, string(body))
@@ -275,13 +294,21 @@ func (h *EventHandler) verifySlackSignature(c *gin.Context) bool {
 func (h *EventHandler) verifyGitHubSignature(c *gin.Context) bool {
 	signature := c.GetHeader("X-Hub-Signature-256")
 	secret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+	environment := os.Getenv("ENV")
 
 	if secret == "" {
 		h.logger.Warn("GITHUB_WEBHOOK_SECRET not configured")
-		return true // Allow for development
+		return environment == "development"
 	}
 
-	body, _ := io.ReadAll(c.Request.Body)
+	if signature == "" {
+		return false
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return false
+	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 
 	hash := hmac.New(sha256.New, []byte(secret))
