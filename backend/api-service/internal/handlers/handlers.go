@@ -100,13 +100,8 @@ func (qh *QueryHandler) Query(c *gin.Context) {
 		return
 	}
 
-	// Extract knowledge IDs and fetch full results
-	knowledgeIDs := make([]string, 0, len(scores))
-	for knowledgeID := range scores {
-		knowledgeIDs = append(knowledgeIDs, knowledgeID)
-	}
-
-	results, err := qh.db.SearchByIDs(knowledgeIDs, scores)
+	// Hydrate the ranked matches without changing the response schema.
+	results, err := qh.db.SearchByIDs(scores)
 	if err != nil {
 		qh.logger.Error("Failed to fetch results", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "fetch failed"})

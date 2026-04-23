@@ -74,10 +74,17 @@ func (db *PostgresDB) GetKnowledgeByID(knowledgeID string) (*models.QueryResult,
 	return result, nil
 }
 
-// SearchByIDs retrieves multiple knowledge items and sorts by similarity
-func (db *PostgresDB) SearchByIDs(knowledgeIDs []string, scores map[string]float64) ([]models.QueryResult, error) {
-	if len(knowledgeIDs) == 0 {
+// SearchByIDs retrieves multiple knowledge items and preserves ranked similarity order.
+func (db *PostgresDB) SearchByIDs(matches []models.SearchMatch) ([]models.QueryResult, error) {
+	if len(matches) == 0 {
 		return []models.QueryResult{}, nil
+	}
+
+	knowledgeIDs := make([]string, 0, len(matches))
+	scoreByID := make(map[string]float64, len(matches))
+	for _, match := range matches {
+		knowledgeIDs = append(knowledgeIDs, match.ID)
+		scoreByID[match.ID] = match.Score
 	}
 
 	query := `
@@ -94,7 +101,7 @@ func (db *PostgresDB) SearchByIDs(knowledgeIDs []string, scores map[string]float
 	}
 	defer rows.Close()
 
-	results := make([]models.QueryResult, 0)
+	resultByID := make(map[string]models.QueryResult, len(matches))
 
 	for rows.Next() {
 		result := models.QueryResult{}
@@ -116,11 +123,30 @@ func (db *PostgresDB) SearchByIDs(knowledgeIDs []string, scores map[string]float
 		}
 
 		// Add similarity score
-		result.SimilarityScore = scores[result.ID]
+		result.SimilarityScore = scoreByID[result.ID]
+		resultByID[result.ID] = result
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return orderQueryResults(matches, resultByID, db.logger), nil
+}
+
+// orderQueryResults reassembles hydrated rows using the ranked similarity matches.
+func orderQueryResults(matches []models.SearchMatch, resultByID map[string]models.QueryResult, logger *zap.Logger) []models.QueryResult {
+	results := make([]models.QueryResult, 0, len(matches))
+	for _, match := range matches {
+		result, ok := resultByID[match.ID]
+		if !ok {
+			logger.Warn("Search result missing knowledge record", zap.String("knowledge_id", match.ID))
+			continue
+		}
 		results = append(results, result)
 	}
 
-	return results, rows.Err()
+	return results
 }
 
 // GetEventHistory returns recent events

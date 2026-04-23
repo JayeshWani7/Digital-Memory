@@ -2,11 +2,13 @@ package vector_db
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"github.com/digital-memory/api-service/internal/database"
+	"github.com/digital-memory/api-service/internal/models"
 )
 
 // PgVectorDB handles vector similarity search using PostgreSQL pgvector extension
@@ -24,7 +26,7 @@ func NewPgVectorDB(db *database.PostgresDB, logger *zap.Logger) (*PgVectorDB, er
 }
 
 // SearchSimilar performs similarity search on embeddings
-func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) (map[string]float64, error) {
+func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) ([]models.SearchMatch, error) {
 	// Convert embedding to PostgreSQL format
 	embeddingStr := pq.Float64Array(embeddingToFloat64(embedding))
 
@@ -43,7 +45,7 @@ func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) (map[string
 	}
 	defer rows.Close()
 
-	results := make(map[string]float64)
+	results := make([]models.SearchMatch, 0, topK)
 
 	for rows.Next() {
 		var knowledgeID string
@@ -54,14 +56,30 @@ func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) (map[string
 			continue
 		}
 
-		results[knowledgeID] = similarity
+		results = append(results, models.SearchMatch{
+			ID:    knowledgeID,
+			Score: similarity,
+		})
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate results: %w", err)
 	}
 
+	sortSearchMatches(results)
+
 	return results, nil
+}
+
+// sortSearchMatches keeps search results ordered by descending similarity score.
+// Ties fall back to the knowledge ID so API responses stay deterministic.
+func sortSearchMatches(results []models.SearchMatch) {
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			return results[i].ID < results[j].ID
+		}
+		return results[i].Score > results[j].Score
+	})
 }
 
 // GetEmbeddingStats returns statistics about embeddings
