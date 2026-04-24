@@ -20,7 +20,12 @@ type Config struct {
 func NewConfig() *Config {
 	kafkaBrokers := []string{}
 	if brokers := os.Getenv("KAFKA_BROKERS"); brokers != "" {
-		kafkaBrokers = strings.Split(brokers, ",")
+		for _, broker := range strings.Split(brokers, ",") {
+    broker = strings.TrimSpace(broker)
+    if broker != "" {
+        kafkaBrokers = append(kafkaBrokers, broker)
+    }
+}
 	}
 
 	return &Config{

@@ -28,10 +28,9 @@ func NewKafkaProducer(brokers []string) (*KafkaProducer, error) {
 		Addr:         kafka.TCP(brokers...),
 		Balancer:     &kafka.LeastBytes{},
 		RequiredAcks: kafka.RequireOne,
-		MaxAttempts:  5,
+		MaxAttempts:  1, // retries handled by publishWithRetry to avoid compounded attempts
 		WriteTimeout: 10 * time.Second,
 		ReadTimeout:  10 * time.Second,
-		// Retry with backoff
 		BatchTimeout: 10 * time.Millisecond,
 		Async:        false,
 	}
@@ -43,15 +42,28 @@ func NewKafkaProducer(brokers []string) (*KafkaProducer, error) {
 		logger: logger,
 	}
 
-	// Test connection
+	// Test connection against all brokers until one responds
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := producer.ping(ctx, brokers[0]); err != nil {
-		return nil, fmt.Errorf("failed to connect to Kafka: %w", err)
+	var lastErr error
+	connectedBroker := ""
+	for _, broker := range brokers {
+		if err := producer.ping(ctx, broker); err == nil {
+			connectedBroker = broker
+			break
+		} else {
+			lastErr = err
+		}
+	}
+	if connectedBroker == "" {
+		return nil, fmt.Errorf("failed to connect to any Kafka broker: %w", lastErr)
 	}
 
-	logger.Info("Connected to Kafka", zap.Strings("brokers", brokers))
+	logger.Info("Connected to Kafka",
+		zap.String("connected_broker", connectedBroker),
+		zap.Strings("brokers", brokers),
+	)
 	return producer, nil
 }
 
@@ -80,7 +92,7 @@ func (kp *KafkaProducer) publishWithRetry(event *models.Event, maxRetries int) e
 		EventType:     event.EventType,
 		Timestamp:     event.ReceivedAt,
 		Data:          event.RawData,
-		CorrelationID: event.ID, // use event ID as correlation ID for tracing
+		CorrelationID: event.ID,
 		Version:       "1.0",
 	}
 
@@ -92,7 +104,6 @@ func (kp *KafkaProducer) publishWithRetry(event *models.Event, maxRetries int) e
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 1s, 2s, 4s
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
 			kp.logger.Warn("Retrying Kafka publish",
 				zap.Int("attempt", attempt+1),
@@ -133,7 +144,7 @@ func (kp *KafkaProducer) getTopicName(source models.EventSource, eventType model
 	return fmt.Sprintf("events.%s.%s", source, eventType)
 }
 
-// GetTopicStats returns message count for all known topics
+// GetTopicStats returns the list of known topics for monitoring
 func (kp *KafkaProducer) GetTopicStats(ctx context.Context) map[string]interface{} {
 	stats := make(map[string]interface{})
 	sources := []models.EventSource{models.SourceSlack, models.SourceGitHub}
