@@ -19,7 +19,20 @@ import (
 )
 
 func init() {
-	_ = godotenv.Load("../../.env")
+	// Try multiple .env locations so the service works regardless of
+	// which directory you run `go run` or the binary from.
+	envPaths := []string{
+		".env",           // run from api-service/
+		"../.env",        // run from api-service/cmd/
+		"../../.env",     // run from api-service/cmd/ on some setups
+		"../../../.env",  // run from project root backend/api-service/cmd
+	}
+	for _, p := range envPaths {
+		if err := godotenv.Load(p); err == nil {
+			fmt.Println("[init] Loaded .env from:", p)
+			break
+		}
+	}
 }
 
 func main() {
@@ -35,8 +48,10 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		logger.Fatal("DATABASE_URL environment variable not set")
+		logger.Fatal("DATABASE_URL environment variable not set — make sure .env exists and is readable")
 	}
+	// DEBUG: print the URL so you can confirm the right credentials are used
+	logger.Info("[DEBUG] Using DATABASE_URL", zap.String("url", dbURL))
 
 	// Initialize database
 	logger.Info("Initializing database connection", zap.String("url", dbURL))

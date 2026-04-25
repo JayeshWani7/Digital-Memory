@@ -14,21 +14,39 @@ logger = logging.getLogger(__name__)
 # Global database connection pool
 _db_connection = None
 _redis_connection = None
+_database_url: str = ""  # set by init_database() at startup
 
 
-async def get_db_connection(database_url: str):
-    """Get or create database connection"""
-    global _db_connection
+def init_database(database_url: str) -> None:
+    """Store the database URL so connection helpers can use it later."""
+    global _database_url
+    _database_url = database_url
+
+
+async def get_db_connection(database_url: str = ""):
+    """Get or create database connection.
     
-    if _db_connection is None:
+    Pass ``database_url`` explicitly, or rely on the module-level
+    ``_database_url`` set via ``init_database()``.
+    """
+    global _db_connection
+
+    url = database_url or _database_url
+    if not url:
+        raise ValueError(
+            "No database URL provided. Call init_database(url) at startup "
+            "or pass url directly to get_db_connection()."
+        )
+
+    if _db_connection is None or _db_connection.closed:
         try:
-            _db_connection = psycopg2.connect(database_url)
+            _db_connection = psycopg2.connect(url)
             _db_connection.autocommit = True
             logger.info("Database connection established")
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
             raise
-    
+
     return _db_connection
 
 
@@ -80,7 +98,8 @@ async def store_knowledge(
     model: str
 ) -> str:
     """Store processed knowledge in database"""
-    conn = await get_db_connection(_db_connection)
+    # FIX: pass the URL string, not the connection object
+    conn = await get_db_connection()
     
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         # Insert knowledge
@@ -120,7 +139,8 @@ async def store_knowledge(
 
 async def get_event_by_id(event_id: str) -> Optional[Dict[str, Any]]:
     """Retrieve event details from database"""
-    conn = await get_db_connection(_db_connection)
+    # FIX: pass the URL string, not the connection object
+    conn = await get_db_connection()
     
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         query = """
@@ -139,7 +159,8 @@ async def get_event_by_id(event_id: str) -> Optional[Dict[str, Any]]:
 
 async def update_event_status(event_id: str, status: str):
     """Update event processing status"""
-    conn = await get_db_connection(_db_connection)
+    # FIX: pass the URL string, not the connection object
+    conn = await get_db_connection()
     
     with conn.cursor() as cur:
         query = """
@@ -159,7 +180,8 @@ async def record_processing_error(
     stack_trace: str = ""
 ):
     """Record a processing error"""
-    conn = await get_db_connection(_db_connection)
+    # FIX: pass the URL string, not the connection object
+    conn = await get_db_connection()
     
     with conn.cursor() as cur:
         query = """
