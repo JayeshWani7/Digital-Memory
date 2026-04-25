@@ -9,12 +9,32 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.config import Config
-from app.database import get_db_connection, close_db_connection
+from app.database import get_db_connection, close_db_connection, init_database
 from app.queue_consumer import QueueConsumer
 from app.llm.processor import KnowledgeProcessor
 
-# Load environment variables
-load_dotenv("../../.env")
+# Load environment variables — try multiple paths so it works from any CWD
+import pathlib
+
+def _load_env() -> None:
+    """Search for .env in several locations and load the first one found."""
+    # Absolute path of the directory containing this file (app/)
+    here = pathlib.Path(__file__).resolve().parent
+    candidates = [
+        here / ".env",            # app/.env
+        here.parent / ".env",     # ai-service/.env  ← recommended placement
+        here.parent.parent / ".env",   # backend/.env
+        here.parent.parent.parent / ".env",  # Digital-Memory/.env (project root)
+    ]
+    for path in candidates:
+        if path.exists():
+            load_dotenv(str(path))
+            print(f"[startup] Loaded .env from: {path}")
+            return
+    print("[startup] WARNING: No .env file found. Relying on system environment variables.")
+
+# Must be called BEFORE Config() or any os.getenv() reads
+_load_env()
 
 # Configure logging
 logging.basicConfig(
@@ -39,7 +59,10 @@ async def lifespan(app: FastAPI):
     
     # Initialize configuration
     config = Config()
-    
+
+    # Register the DB URL in the database module so all helpers can use it
+    init_database(config.database_url)
+
     # Initialize database connection
     try:
         await get_db_connection(config.database_url)

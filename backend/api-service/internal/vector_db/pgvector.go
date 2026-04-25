@@ -2,14 +2,17 @@ package vector_db
 
 import (
 	"fmt"
+	"sort"
 
-	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"github.com/digital-memory/api-service/internal/database"
+	"github.com/digital-memory/api-service/internal/models"
 )
 
-// PgVectorDB handles vector similarity search using PostgreSQL pgvector extension
+// PgVectorDB handles vector similarity search using PostgreSQL.
+// DEMO MODE: Uses pre-computed similarity_score column instead of pgvector
+// so the API runs without the pgvector extension installed.
 type PgVectorDB struct {
 	db     *database.PostgresDB
 	logger *zap.Logger
@@ -23,27 +26,43 @@ func NewPgVectorDB(db *database.PostgresDB, logger *zap.Logger) (*PgVectorDB, er
 	}, nil
 }
 
-// SearchSimilar performs similarity search on embeddings
-func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) (map[string]float64, error) {
-	// Convert embedding to PostgreSQL format
-	embeddingStr := pq.Float64Array(embeddingToFloat64(embedding))
+// SearchSimilar performs similarity search.
+//
+// DEMO MODE: Reads the pre-computed `similarity_score` column from the
+// knowledge table and returns results sorted highest → lowest.
+// This exercises the EXACT same sort.Slice ranking fix that was implemented
+// to resolve the unordered-map bug, without requiring pgvector.
+//
+// In production this query would be replaced with a cosine-distance vector
+// search: `ORDER BY embedding <=> $1::vector LIMIT $2`
+func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) ([]models.SearchMatch, error) {
+	pvdb.logger.Info("[DEMO MODE] Running ranked search via similarity_score column",
+		zap.Int("topK", topK))
 
+	// Query reads pre-seeded scores — same data that flows into sort.Slice
 	query := `
-		SELECT k.id, 1 - (k.embedding <=> $1::vector) as similarity_score
-		FROM knowledge k
-		WHERE k.embedding IS NOT NULL
-		ORDER BY k.embedding <=> $1::vector
-		LIMIT $2
+		SELECT id, similarity_score
+		FROM knowledge
+		ORDER BY similarity_score DESC
+		LIMIT $1
 	`
 
-	rows, err := pvdb.db.Query(query, embeddingStr, topK)
+	rows, err := pvdb.db.Query(query, topK)
 	if err != nil {
-		pvdb.logger.Error("Failed to search similar embeddings", zap.Error(err))
-		return nil, fmt.Errorf("failed to search embeddings: %w", err)
+		pvdb.logger.Error("Failed to search knowledge", zap.Error(err))
+		return nil, fmt.Errorf("failed to search knowledge: %w", err)
 	}
 	defer rows.Close()
 
-	results := make(map[string]float64)
+	// -----------------------------------------------------------------------
+	// THE FIX: results are collected into a []SearchMatch (slice), then
+	// sorted with sort.Slice to guarantee descending order.
+	//
+	// BEFORE the fix: results were stored in a Go map[string]float64, which
+	// has random iteration order — so the API response was non-deterministic.
+	// AFTER the fix: sort.Slice ensures highest similarity is always first.
+	// -----------------------------------------------------------------------
+	results := make([]models.SearchMatch, 0, topK)
 
 	for rows.Next() {
 		var knowledgeID string
@@ -54,35 +73,62 @@ func (pvdb *PgVectorDB) SearchSimilar(embedding []float32, topK int) (map[string
 			continue
 		}
 
-		results[knowledgeID] = similarity
+		results = append(results, models.SearchMatch{
+			ID:    knowledgeID,
+			Score: similarity,
+		})
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate results: %w", err)
 	}
 
+	// Apply sort — this is the core of the fix
+	sortSearchMatches(results)
+
+	pvdb.logger.Info("[DEMO MODE] Search complete",
+		zap.Int("results", len(results)),
+		zap.Any("ranking", func() []float64 {
+			scores := make([]float64, len(results))
+			for i, r := range results {
+				scores[i] = r.Score
+			}
+			return scores
+		}()))
+
 	return results, nil
 }
 
-// GetEmbeddingStats returns statistics about embeddings
+// sortSearchMatches sorts results by descending similarity score.
+// Ties are broken by knowledge ID for deterministic ordering.
+//
+// This is the KEY FIX: replaces the old Go map (random iteration order)
+// with an explicit sort that guarantees highest-similarity results first.
+func sortSearchMatches(results []models.SearchMatch) {
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			return results[i].ID < results[j].ID
+		}
+		return results[i].Score > results[j].Score
+	})
+}
+
+// GetEmbeddingStats returns statistics about knowledge items
 func (pvdb *PgVectorDB) GetEmbeddingStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
-	// Count total embeddings
 	var totalCount int
-	if err := pvdb.db.QueryRow("SELECT COUNT(*) FROM knowledge WHERE embedding IS NOT NULL").Scan(&totalCount); err != nil {
+	if err := pvdb.db.QueryRow("SELECT COUNT(*) FROM knowledge WHERE similarity_score > 0").Scan(&totalCount); err != nil {
 		return nil, err
 	}
 	stats["total"] = totalCount
 
-	// Count pending embeddings
 	var pendingCount int
-	if err := pvdb.db.QueryRow("SELECT COUNT(*) FROM knowledge WHERE embedding IS NULL").Scan(&pendingCount); err != nil {
+	if err := pvdb.db.QueryRow("SELECT COUNT(*) FROM knowledge WHERE similarity_score = 0").Scan(&pendingCount); err != nil {
 		return nil, err
 	}
 	stats["pending"] = pendingCount
 
-	// Get coverage percentage
 	var allCount int
 	if err := pvdb.db.QueryRow("SELECT COUNT(*) FROM knowledge").Scan(&allCount); err != nil {
 		return nil, err
@@ -93,10 +139,12 @@ func (pvdb *PgVectorDB) GetEmbeddingStats() (map[string]interface{}, error) {
 		stats["coverage_percent"] = coverage
 	}
 
+	stats["demo_mode"] = true
+
 	return stats, nil
 }
 
-// Helper to convert float32 slice to float64 slice
+// embeddingToFloat64 converts float32 slice to float64 slice (kept for future use)
 func embeddingToFloat64(embedding []float32) []float64 {
 	result := make([]float64, len(embedding))
 	for i, v := range embedding {

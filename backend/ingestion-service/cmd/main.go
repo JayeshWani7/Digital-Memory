@@ -20,8 +20,20 @@ import (
 )
 
 func init() {
-	// Load .env file if it exists
-	_ = godotenv.Load("../../.env")
+	// Try multiple .env locations so the service works regardless of
+	// which directory you run `go run` or the binary from.
+	envPaths := []string{
+		".env",           // run from ingestion-service/
+		"../.env",        // run from ingestion-service/cmd/
+		"../../.env",     // run from ingestion-service/cmd/ on some setups
+		"../../../.env",  // run from project root backend/ingestion-service/cmd
+	}
+	for _, p := range envPaths {
+		if err := godotenv.Load(p); err == nil {
+			fmt.Println("[init] Loaded .env from:", p)
+			break
+		}
+	}
 }
 
 func main() {
@@ -37,13 +49,16 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		logger.Fatal("DATABASE_URL environment variable not set")
+		logger.Fatal("DATABASE_URL environment variable not set — make sure .env exists and is readable")
 	}
+	// DEBUG: confirm correct credentials are loaded
+	logger.Info("[DEBUG] Using DATABASE_URL", zap.String("url", dbURL))
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
 	}
+	logger.Info("[DEBUG] Using REDIS_URL", zap.String("url", redisURL))
 
 	// Initialize database
 	logger.Info("Initializing database connection", zap.String("url", dbURL))

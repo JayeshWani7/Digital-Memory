@@ -9,6 +9,12 @@ type QueryRequest struct {
 	Filter map[string]interface{} `json:"filter,omitempty"`
 }
 
+// SearchMatch represents a ranked similarity match before result hydration.
+type SearchMatch struct {
+	ID    string
+	Score float64
+}
+
 // QueryResult represents a single search result
 type QueryResult struct {
 	ID             string                 `json:"id"`
