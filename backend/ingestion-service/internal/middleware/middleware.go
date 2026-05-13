@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
@@ -33,7 +32,7 @@ func ErrorHandlingMiddleware() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": fmt.Sprintf("%v", err),
+					"error": "internal server error",
 				})
 			}
 		}()
