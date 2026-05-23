@@ -61,6 +61,7 @@ func main() {
 	router.Use(middleware.LoggingMiddleware(logger))
 	router.Use(middleware.ErrorHandlingMiddleware())
 	router.Use(middleware.RateLimitMiddleware())
+	router.Use(middleware.PayloadLimitMiddleware(1 << 20)) // 1MB limit
 
 	// Initialize handlers
 	handlerService := handlers.NewQueryHandler(db, vectorDB, logger)

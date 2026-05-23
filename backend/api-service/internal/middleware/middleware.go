@@ -47,3 +47,11 @@ func RateLimitMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// PayloadLimitMiddleware limits the size of request bodies
+func PayloadLimitMiddleware(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
