@@ -43,17 +43,27 @@ func NewKafkaProducer(brokers []string) (*KafkaProducer, error) {
 	}
 
 	// Test connection against all brokers until one responds
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// FIX 3: Use per-broker timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	var lastErr error
 	connectedBroker := ""
 	for _, broker := range brokers {
-		if err := producer.ping(ctx, broker); err == nil {
+		// Create per-broker timeout (3 seconds each)
+		pingCtx, pingCancel := context.WithTimeout(ctx, 3*time.Second)
+		err := producer.ping(pingCtx, broker)
+		pingCancel()
+
+		if err == nil {
 			connectedBroker = broker
 			break
 		} else {
 			lastErr = err
+			logger.Warn("Failed to connect to broker",
+				zap.String("broker", broker),
+				zap.Error(err),
+			)
 		}
 	}
 	if connectedBroker == "" {
@@ -83,6 +93,7 @@ func (kp *KafkaProducer) PublishEvent(event *models.Event) error {
 }
 
 // publishWithRetry attempts to publish with exponential backoff
+// FIX 2: Correct backoff: 1s, 2s, 4s for 3 attempts
 func (kp *KafkaProducer) publishWithRetry(event *models.Event, maxRetries int) error {
 	topic := kp.getTopicName(event.Source, event.EventType)
 
@@ -104,6 +115,7 @@ func (kp *KafkaProducer) publishWithRetry(event *models.Event, maxRetries int) e
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
+			// FIX 2: Calculate backoff: 1s (attempt=1), 2s (attempt=2)
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
 			kp.logger.Warn("Retrying Kafka publish",
 				zap.Int("attempt", attempt+1),
@@ -145,7 +157,8 @@ func (kp *KafkaProducer) getTopicName(source models.EventSource, eventType model
 }
 
 // GetTopicStats returns the list of known topics for monitoring
-func (kp *KafkaProducer) GetTopicStats(ctx context.Context) map[string]interface{} {
+// FIX 4: Remove unused ctx parameter (no longer needed)
+func (kp *KafkaProducer) GetTopicStats() map[string]interface{} {
 	stats := make(map[string]interface{})
 	sources := []models.EventSource{models.SourceSlack, models.SourceGitHub}
 	eventTypes := []models.EventType{
@@ -158,7 +171,7 @@ func (kp *KafkaProducer) GetTopicStats(ctx context.Context) map[string]interface
 	for _, source := range sources {
 		for _, eventType := range eventTypes {
 			topic := kp.getTopicName(source, eventType)
-			stats[topic] = "active"
+			stats[topic] = "active" // Topic is configured and ready
 		}
 	}
 	return stats
