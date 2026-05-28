@@ -103,7 +103,7 @@ type Commit struct {
 	Timestamp string `json:"timestamp"`
 	Author    User   `json:"author"`
 	URL       string `json:"url"`
-	Diff      string `json:"diff,omitempty"` // For pull requests
+	Diff      string `json:"diff,omitempty"`
 }
 
 type Repository struct {
@@ -120,13 +120,24 @@ type User struct {
 	Email string `json:"email"`
 }
 
-// QueueMessage represents a message published to the queue
+// QueueMessage represents a message published to the queue (Redis)
 type QueueMessage struct {
 	EventID   string                 `json:"event_id"`
 	Source    EventSource            `json:"source"`
 	EventType EventType              `json:"event_type"`
 	Timestamp time.Time              `json:"timestamp"`
 	Data      map[string]interface{} `json:"data"`
+}
+
+// KafkaMessage represents a message published to Kafka
+type KafkaMessage struct {
+	EventID       string                 `json:"event_id"`
+	Source        EventSource            `json:"source"`
+	EventType     EventType              `json:"event_type"`
+	Timestamp     time.Time              `json:"timestamp"`
+	Data          map[string]interface{} `json:"data"`
+	CorrelationID string                 `json:"correlation_id"`
+	Version       string                 `json:"version"`
 }
 
 // ValidationResult represents the result of event validation

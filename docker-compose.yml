@@ -19,7 +19,7 @@ services:
       retries: 5
     networks:
       - digital-memory-net
-    # Keep values in sync with .env file
+    restart: unless-stopped
 
   # Redis for message queue
   redis:
@@ -37,6 +37,53 @@ services:
     networks:
       - digital-memory-net
     command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: digital-memory-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - digital-memory-net
+    restart: unless-stopped
+
+  # Kafka for event streaming
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: digital-memory-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - digital-memory-net
+    restart: unless-stopped
 
   # Ingestion Service (Go) - will build from source
   ingestion-service:
@@ -50,6 +97,7 @@ services:
       PORT: 8001
       DATABASE_URL: postgres://memory_user:secure_password_change_me@postgres:5432/digital_memory?sslmode=disable
       REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:29092
       LOG_LEVEL: info
       ENV: development
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
@@ -60,13 +108,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     networks:
       - digital-memory-net
     restart: unless-stopped
-    # Uncomment for local development:
-    # volumes:
-    #   - ./backend/ingestion-service:/app
-    # command: go run cmd/main.go
 
   # AI Processing Service (Python) - will build from source
   ai-service:
@@ -93,10 +139,6 @@ services:
     networks:
       - digital-memory-net
     restart: unless-stopped
-    # Uncomment for local development with hot reload:
-    # volumes:
-    #   - ./backend/ai-service:/app
-    # command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
 
   # API Service (Go) - will build from source
   api-service:
@@ -122,10 +164,6 @@ services:
     networks:
       - digital-memory-net
     restart: unless-stopped
-    # Uncomment for local development:
-    # volumes:
-    #   - ./backend/api-service:/app
-    # command: go run cmd/main.go
 
   # Optional: Adminer for database management
   adminer:
@@ -139,6 +177,7 @@ services:
       - digital-memory-net
     environment:
       ADMINER_DEFAULT_SERVER: postgres
+    restart: unless-stopped
 
   # Optional: Redis Commander for queue inspection
   redis-commander:
@@ -152,6 +191,7 @@ services:
       - redis
     networks:
       - digital-memory-net
+    restart: unless-stopped
 
 volumes:
   postgres_data:
