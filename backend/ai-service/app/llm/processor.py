@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 
 import openai
+from openai import OpenAI
 
 from app.models import ProcessedKnowledge, Entity
 
@@ -18,7 +19,7 @@ class KnowledgeProcessor:
         self.embedding_model = config.openai_embedding_model
         
         # Initialize OpenAI
-        openai.api_key = config.openai_api_key
+        self.openai_client = OpenAI(api_key=config.openai_api_key)
     
     async def process_slack_message(self, event_data: dict, raw_text: str) -> ProcessedKnowledge:
         """Process a Slack message"""
@@ -79,7 +80,7 @@ class KnowledgeProcessor:
         """
         
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
@@ -108,7 +109,7 @@ class KnowledgeProcessor:
         """
         
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
@@ -153,7 +154,7 @@ class KnowledgeProcessor:
         """
         
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
@@ -189,7 +190,7 @@ class KnowledgeProcessor:
         """
         
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {
@@ -216,11 +217,11 @@ class KnowledgeProcessor:
     async def _generate_embedding(self, text: str) -> list:
         """Generate embedding vector for the text"""
         try:
-            response = openai.Embedding.create(
+            response = self.openai_client.embeddings.create(
                 input=text,
                 model=self.embedding_model
             )
-            return response["data"][0]["embedding"]
+            return response.data[0].embedding
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             return None
